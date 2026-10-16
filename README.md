@@ -61,8 +61,26 @@ ingest of 3 sample papers (17 nodes, 30 edges), basic queries
 (claims-by-concept, answer-with-reasoning-path, contradictions, multi-hop
 support chains, citations), per-user graph isolation, and persistence
 across a container restart are all implemented and test-verified.
-A demo video link will be added before submission (deadline 19 October
-2026, 01:29 WIB).
+
+Day-2 status (the brain): a deterministic reasoning engine
+(`graphmem/reasoning.py`) answers free-text questions by graph traversal
+only — stored-Question match → ANSWERS edges → multi-hop SUPPORTS
+expansion → CONTRADICTS check → STATES citations — and returns an ordered,
+human-readable **reasoning path** for every answer (plus an honest
+"no answer in memory yet" when the graph has no path, never an invented
+answer). Two agents share one graph (`graphmem/agents.py`): the
+**Librarian** writes (ingest, dedupe report, audit) and the **Scout**
+reads and acts (answer + suggested actions derived from the same path,
+plus a brief of unanswered questions and open contradictions). Try it:
+
+```bash
+.venv/bin/python scripts/ask_demo.py                      # canned demo
+.venv/bin/python scripts/ask_demo.py "Tell me about Multi-hop Reasoning"
+```
+
+Full suite: 18 integration tests (8 day-1 + 10 day-2), all passing
+against the live local FalkorDB. A demo video link will be added before
+submission (deadline 19 October 2026, 01:29 WIB).
 
 ## License
 
