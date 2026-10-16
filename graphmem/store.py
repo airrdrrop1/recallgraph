@@ -317,3 +317,108 @@ class RecallGraphStore:
             "RETURN p.id, p.title",
             {"id": paper_id}).result_set
         return [{"id": r[0], "title": r[1]} for r in rows]
+
+    # -- day-2: lookup / traversal helpers for the reasoning engine --------
+    def all_concepts(self) -> list[dict]:
+        rows = self.query(
+            "MATCH (c:Concept) RETURN c.id, c.name, c.description "
+            "ORDER BY c.name").result_set
+        return [{"id": r[0], "name": r[1], "description": r[2] or ""}
+                for r in rows]
+
+    def all_questions(self) -> list[dict]:
+        rows = self.query(
+            "MATCH (q:Question) RETURN q.id, q.text ORDER BY q.text"
+        ).result_set
+        return [{"id": r[0], "text": r[1]} for r in rows]
+
+    def get_claim(self, claim_id: str) -> dict | None:
+        rows = self.query(
+            "MATCH (c:Claim {id: $id}) RETURN c.id, c.text, c.confidence",
+            {"id": claim_id}).result_set
+        if not rows:
+            return None
+        return {"id": rows[0][0], "text": rows[0][1],
+                "confidence": rows[0][2]}
+
+    def paper_for_claim(self, claim_id: str) -> dict | None:
+        rows = self.query(
+            "MATCH (p:Paper)-[:STATES]->(c:Claim {id: $id}) "
+            "RETURN p.id, p.title, p.authors, p.year",
+            {"id": claim_id}).result_set
+        if not rows:
+            return None
+        return {"id": rows[0][0], "title": rows[0][1],
+                "authors": rows[0][2], "year": rows[0][3]}
+
+    def concepts_for_claim(self, claim_id: str) -> list[dict]:
+        rows = self.query(
+            "MATCH (c:Claim {id: $id})-[:ABOUT]->(k:Concept) "
+            "RETURN k.id, k.name",
+            {"id": claim_id}).result_set
+        return [{"id": r[0], "name": r[1]} for r in rows]
+
+    def concepts_for_question(self, question_id: str) -> list[dict]:
+        rows = self.query(
+            "MATCH (q:Question {id: $id})-[:ASKS_ABOUT]->(k:Concept) "
+            "RETURN k.id, k.name",
+            {"id": question_id}).result_set
+        return [{"id": r[0], "name": r[1]} for r in rows]
+
+    def contradicting_claims(self, claim_id: str) -> list[dict]:
+        """Claims that contradict (or are contradicted by) ``claim_id``."""
+        rows = self.query(
+            "MATCH (c:Claim {id: $id})-[:CONTRADICTS]->(o:Claim) "
+            "RETURN o.id, o.text, o.confidence",
+            {"id": claim_id}).result_set
+        rows2 = self.query(
+            "MATCH (o:Claim)-[:CONTRADICTS]->(c:Claim {id: $id}) "
+            "RETURN o.id, o.text, o.confidence",
+            {"id": claim_id}).result_set
+        seen, out = set(), []
+        for r in list(rows) + list(rows2):
+            if r[0] not in seen:
+                seen.add(r[0])
+                out.append({"id": r[0], "text": r[1], "confidence": r[2]})
+        return out
+
+    def support_chain_structured(self, claim_id: str,
+                                 max_depth: int = 5) -> list[list[dict]]:
+        """Structured multi-hop SUPPORTS paths starting at ``claim_id``.
+
+        Each path is a list of node dicts {kind, id, label} in traversal
+        order — the machine-readable form the reasoning UI renders,
+        as opposed to support_chain() which returns display strings.
+        """
+        rows = self.query(
+            "MATCH path = (start:Claim {id: $id})-[:SUPPORTS*1.."
+            + str(int(max_depth)) + "]->(end) "
+            "RETURN nodes(path)",
+            {"id": claim_id}).result_set
+        paths: list[list[dict]] = []
+        for (nodes,) in rows:
+            path = []
+            for node in nodes:
+                labels = list(getattr(node, "labels", []) or [])
+                props = getattr(node, "properties", {}) or {}
+                label = (props.get("text") or props.get("name")
+                         or props.get("title") or props.get("id") or "")
+                path.append({"kind": labels[0] if labels else "Node",
+                             "id": props.get("id"), "label": label})
+            if path:
+                paths.append(path)
+        return paths
+
+    def unanswered_questions(self) -> list[dict]:
+        rows = self.query(
+            "MATCH (q:Question) WHERE NOT ( (:Claim)-[:ANSWERS]->(q) ) "
+            "RETURN q.id, q.text ORDER BY q.text").result_set
+        return [{"id": r[0], "text": r[1]} for r in rows]
+
+    def strongest_claims(self, limit: int = 5) -> list[dict]:
+        rows = self.query(
+            "MATCH (c:Claim) RETURN c.id, c.text, c.confidence "
+            "ORDER BY c.confidence DESC LIMIT $limit",
+            {"limit": int(limit)}).result_set
+        return [{"id": r[0], "text": r[1], "confidence": r[2]}
+                for r in rows]
