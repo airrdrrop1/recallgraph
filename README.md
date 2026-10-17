@@ -1,86 +1,170 @@
 # RecallGraph
 
-An AI research assistant that remembers everything in a graph — and shows its reasoning path.
+**Agent memory that shows its work.** RecallGraph stores what an AI agent
+learns in a **FalkorDB** graph — and every answer it gives comes with the
+exact reasoning path it traversed to get there.
 
-RecallGraph stores what it learns (people, projects, topics, decisions, tasks, sources) in a **FalkorDB** graph, one graph per user. When asked a question, it answers from a multi-hop graph traversal and shows the exact path it used, then turns that path into suggested actions.
+Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs x FalkorDB),
+targeting **Track 2 — Agent Memory and Coordination** (primary) and
+**Track 1 — Agents That Act on Connected Data** (secondary).
+Build window: 15–18 October 2026; the FalkorDB implementation in this
+repository was written during the event, as the rules require.
 
-Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs x FalkorDB), targeting Track 2 (Agent Memory and Coordination) and Track 1 (Agents That Act on Connected Data).
+## Why a graph — and why show the path?
 
-> Build window: 15–18 October 2026. The FalkorDB implementation in this repository is written during the event, as the rules require. This README, the license, and the folder structure are general preparation only.
+Flat retrieval (chunk + embed) loses the relations between facts: you
+cannot ask *why* an answer is believed, *what contradicts it*, or *which
+source stated it*. RecallGraph keeps those relations as first-class
+edges, so an answer is a traversal, not a guess:
 
-## What it does
+1. **Question match** — the question is matched to a stored `Question` node.
+2. **ANSWERS** — incoming `ANSWERS` edges lead to the answering claims.
+3. **SUPPORTS (multi-hop)** — each claim's evidence chain is expanded,
+   several hops deep.
+4. **CONTRADICTS** — contested answers are flagged, never presented as settled.
+5. **STATES citations** — every claim traces back to the `Paper` that stated it.
 
-1. **Ingest** — paste notes, chat excerpts, or small documents. Entities and relations are extracted and written to FalkorDB. Facts that change are linked with a timestamped `SUPERSEDES` relation instead of being deleted.
-2. **Remember** — every session becomes an `Episode` node linked to the entities it touched, so memory persists across restarts.
-3. **Recall & act** — questions are answered from a relevant subgraph only. Every answer includes the human-readable reasoning path (node → relation → node). Two agents share one graph: a **Librarian** that writes and tidies memory, and a **Scout** that reads it and drafts a brief of suggested actions.
+If no path exists, RecallGraph says **"No answer in memory yet"** and
+shows the steps it tried — it never invents an answer the graph does
+not contain.
 
-## Planned structure
+## Two agents, one shared memory
+
+- **Librarian** (write side) — ingests documents, reports which claims
+  are genuinely new, and audits the memory (open contradictions,
+  unanswered questions, strongest claims).
+- **Scout** (read side) — answers questions through the reasoning engine
+  and derives **suggested actions from the same reasoning path**: a
+  contested answer → resolve the contradiction first; a cited paper →
+  read/verify the source; a deep support chain → promote it into a note;
+  no answer → ingest a source. It also drafts a brief of what is known,
+  contested, and missing.
+
+Both agents hold a handle on the *same* per-user FalkorDB graph, so a
+document only the Librarian ever touched is immediately answerable by
+the Scout — no re-teaching, no message bus. The test suite proves this
+handoff explicitly.
+
+## Memory model
+
+One FalkorDB graph per user (`recallgraph_<user>`), which keeps
+memories isolated (also test-verified).
+
+| Nodes | Edges |
+|---|---|
+| `Paper {id, title, authors, year, source}` | `(Claim)-[:SUPPORTS]->(Claim\|Concept)` |
+| `Concept {id, name, description}` | `(Claim)-[:CONTRADICTS]->(Claim)` |
+| `Claim {id, text, confidence}` | `(Claim)-[:ANSWERS]->(Question)` |
+| `Question {id, text}` | `(Paper)-[:CITES]->(Paper)` |
+| | structural: `(Paper)-[:STATES]->(Claim)`, `(Claim)-[:ABOUT]->(Concept)`, `(Question)-[:ASKS_ABOUT]->(Concept)` |
+
+The reasoning engine is deterministic (concept/keyword matching, no
+LLM), so the demo and the tests are reproducible. Document ingestion
+uses a deterministic marked-up-text extractor (`PAPER:` / `CONCEPT:` /
+`CLAIM [conf]:` / `QUESTION:` lines) behind the same document-dict shape
+an LLM extractor can later produce.
+
+## Repository layout
 
 ```
-app.py            # single-page web UI (stdlib http.server): ingest, ask, reasoning-path panel
+app.py               # Day-3 web UI (stdlib http.server): graph view,
+                     # ingest form, ask + reasoning-path panel, Scout brief
 graphmem/
-  store.py        # FalkorDB client wrapper — all Cypher lives here
-  extract.py      # entity/relation extraction (LLM with deterministic fallback)
-  agents.py       # Librarian (write) + Scout (read/brief)
-  demo_data.py    # fictional mini-company data for the demo
-tests/            # persistence across restart, multi-hop recall, supersede, per-user isolation
+  store.py           # FalkorDB wrapper — all Cypher lives here
+  extract.py         # deterministic document extractor
+  reasoning.py       # ReasoningEngine: question -> traversal -> answer + path
+  agents.py          # Librarian (write) + Scout (read/act)
+  demo_data.py       # 3 sample papers: 17 nodes / 30 edges
+scripts/
+  ingest_demo.py     # seed the demo graph, run the basic queries
+  ask_demo.py        # terminal demo: questions, reasoning paths, brief
+tests/               # 27 integration tests (days 1-3), live FalkorDB
+demo/                # demo video + its production script
+DEMO-SCRIPT-day3.md  # the 5-beat demo narration script (EN, ±2:30)
 ```
 
-## Setup (local, verified 15 Oct 2026)
+## Setup (local — verified end-to-end 17 Oct 2026)
 
 RecallGraph runs against a local FalkorDB instance (Redis protocol,
-`127.0.0.1:6379`, browser UI on `:3000`). In this workspace the instance
-runs under rootful Podman with a custom storage root:
+`127.0.0.1:6379`, browser UI on `:3000`).
+
+**Generic (Docker):**
 
 ```bash
-# 1. Start (or check) FalkorDB
+docker run -d --name falkordb -p 6379:6379 -p 3000:3000 falkordb/falkordb:latest
+```
+
+**This workspace (rootful Podman, custom storage root + crun):**
+
+```bash
 P="podman --root /home/hatch/podman-storage --runroot /home/hatch/podman-runroot --storage-driver vfs --runtime /home/hatch/bin/crun"
 $P ps -a                       # if falkordb-prep is not Up:
 $P start falkordb-prep
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000   # expect 200
+```
 
-# (generic equivalent: docker run -d --name falkordb -p 6379:6379 -p 3000:3000 falkordb/falkordb:latest)
+**App:**
 
-# 2. Python environment
+```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
-# 3. Smoke test — expect [[1]]
+# Smoke test — expect [[1]]
 .venv/bin/python -c "from falkordb import FalkorDB; print(FalkorDB(host='127.0.0.1',port=6379).select_graph('kick').query('RETURN 1').result_set)"
 
-# 4. Ingest the sample documents and run the basic queries
+# Seed the demo graph (3 papers -> 17 nodes / 30 edges)
 .venv/bin/python scripts/ingest_demo.py --reset
 
-# 5. Tests (integration, against the live instance; dedicated graph, self-cleaning)
+# Tests — 27 integration tests against the live instance
+# (dedicated graphs, self-cleaning)
 .venv/bin/python -m pytest tests/ -v
 ```
 
-Day-1 status: schema (Paper / Concept / Claim / Question; SUPPORTS /
-CONTRADICTS / ANSWERS / CITES plus structural STATES / ABOUT / ASKS_ABOUT),
-ingest of 3 sample papers (17 nodes, 30 edges), basic queries
-(claims-by-concept, answer-with-reasoning-path, contradictions, multi-hop
-support chains, citations), per-user graph isolation, and persistence
-across a container restart are all implemented and test-verified.
+Environment overrides: `FALKORDB_HOST`, `FALKORDB_PORT`.
 
-Day-2 status (the brain): a deterministic reasoning engine
-(`graphmem/reasoning.py`) answers free-text questions by graph traversal
-only — stored-Question match → ANSWERS edges → multi-hop SUPPORTS
-expansion → CONTRADICTS check → STATES citations — and returns an ordered,
-human-readable **reasoning path** for every answer (plus an honest
-"no answer in memory yet" when the graph has no path, never an invented
-answer). Two agents share one graph (`graphmem/agents.py`): the
-**Librarian** writes (ingest, dedupe report, audit) and the **Scout**
-reads and acts (answer + suggested actions derived from the same path,
-plus a brief of unanswered questions and open contradictions). Try it:
+## Run the demo
+
+**Web UI (recommended):**
 
 ```bash
-.venv/bin/python scripts/ask_demo.py                      # canned demo
+.venv/bin/python app.py --port 8765    # http://localhost:8765
+```
+
+Ask *"Why should an AI agent store memory in a graph?"* — you get the
+answer (confidence 0.8), the 5-step reasoning path, the citation
+(*Limits of Flat Retrieval for Long-lived Agents*) and 2 suggested
+actions. Try *"Tell me about Multi-hop Reasoning"* (concept fallback),
+*"What is the capital of France?"* (honest gap), then ingest the Zebra
+sample in the Ingest panel and ask about it — the Scout answers from
+memory only the Librarian wrote. Restart the FalkorDB container and
+reload: the graph is still there.
+
+**Terminal (same outputs, no browser):**
+
+```bash
+.venv/bin/python scripts/ask_demo.py
 .venv/bin/python scripts/ask_demo.py "Tell me about Multi-hop Reasoning"
 ```
 
-Full suite: 18 integration tests (8 day-1 + 10 day-2), all passing
-against the live local FalkorDB. A demo video link will be added before
-submission (deadline 19 October 2026, 01:29 WIB).
+**Video:** `demo/recallgraph-demo-day3.mp4` (±2:30, English narration,
+following `DEMO-SCRIPT-day3.md`) — every beat is rendered from live
+output of the pipeline/UI APIs above, including a real FalkorDB
+container restart proving persistence. Production script:
+`demo/make_demo_video.py`.
+
+## Build log
+
+- **Day 1 (15 Oct)** — FalkorDB store + schema, demo ingest, basic
+  queries (claims-by-concept, answer-with-path, contradictions,
+  multi-hop support chains, citations), per-user isolation, persistence
+  across a container restart. 8 tests.
+- **Day 2 (16 Oct)** — the brain: `ReasoningEngine` (stored-Question →
+  ANSWERS → multi-hop SUPPORTS → CONTRADICTS → STATES citations, with
+  layered honest fallbacks) and Librarian/Scout on one shared graph.
+  18 tests.
+- **Day 3 (17 Oct)** — the face: web UI (graph view + ingest + ask +
+  reasoning-path panel + Scout brief), `graph_snapshot()` API, demo
+  video, final README. **27/27 tests passing.**
 
 ## License
 
