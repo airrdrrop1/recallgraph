@@ -4,7 +4,7 @@ Deadline: Monday 19 October 2026, 01:29 WIB. Internal target: submit by 18 Octob
 
 - **Project:** RecallGraph
 - **Tracks:** Track 2 — Agent Memory and Coordination (primary); Track 1 — Agents That Act on Connected Data (secondary)
-- **Repo:** (GitHub public URL — fill in when published, 18 Oct)
+- **Repo:** https://github.com/airrdrrop1/recallgraph (public, published 17 Oct 2026)
 - **Demo:** video `demo/recallgraph-demo-day3.mp4` (±2:30, in repo) + local setup instructions in README (no live deployment — FalkorDB runs locally; the video shows the real UI/pipeline incl. a container restart)
 
 ## Description
@@ -40,5 +40,5 @@ Deadline: Monday 19 October 2026, 01:29 WIB. Internal target: submit by 18 Octob
 - [x] Tests: 27/27 integration tests passing against live local FalkorDB (17 Oct)
 - [x] README setup complete (Podman workspace + generic Docker), architecture + demo instructions
 - [x] Demo video <3 min recorded from real pipeline/UI output (day-3, 17 Oct)
-- [ ] Repo public, LICENSE visible (18 Oct)
+- [x] Repo public, LICENSE visible (17 Oct 2026)
 - [ ] Blog post draft for the side prize (AirPods — best project blog post) — optional, if time remains 18 Oct
