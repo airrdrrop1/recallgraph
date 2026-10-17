@@ -415,6 +415,50 @@ class RecallGraphStore:
             "RETURN q.id, q.text ORDER BY q.text").result_set
         return [{"id": r[0], "text": r[1]} for r in rows]
 
+    # -- day-3: full snapshot for the UI graph view -------------------------
+    def graph_snapshot(self) -> dict:
+        """Every node and edge, in a JSON-friendly shape for the UI.
+
+        Node ``key`` is ``"<Label>:<id>"`` so edges can reference endpoints
+        unambiguously; ``title`` is the human label per node kind (paper
+        title, concept name, claim/question text).
+        """
+        title_prop = {"Paper": "title", "Concept": "name",
+                      "Claim": "text", "Question": "text"}
+        nodes: list[dict] = []
+        for label in NODE_LABELS:
+            rows = self.query(f"MATCH (n:{label}) RETURN n").result_set
+            for (node,) in rows:
+                props = getattr(node, "properties", {}) or {}
+                node_id = props.get("id")
+                if node_id is None:
+                    continue
+                entry = {"key": f"{label}:{node_id}", "id": node_id,
+                         "label": label,
+                         "title": props.get(title_prop[label]) or node_id}
+                if label == "Claim":
+                    entry["confidence"] = props.get("confidence")
+                if label == "Paper":
+                    entry["authors"] = props.get("authors") or ""
+                    entry["year"] = props.get("year")
+                if label == "Concept":
+                    entry["description"] = props.get("description") or ""
+                nodes.append(entry)
+        nodes.sort(key=lambda n: (n["label"], n["id"]))
+        key_by_id = {n["id"]: n["key"] for n in nodes}
+        edges: list[dict] = []
+        for edge_type in ALL_EDGE_TYPES:
+            rows = self.query(
+                f"MATCH (a)-[:{edge_type}]->(b) RETURN a.id, b.id"
+            ).result_set
+            for from_id, to_id in rows:
+                if from_id in key_by_id and to_id in key_by_id:
+                    edges.append({"from": key_by_id[from_id],
+                                  "to": key_by_id[to_id],
+                                  "type": edge_type})
+        edges.sort(key=lambda e: (e["type"], e["from"], e["to"]))
+        return {"graph": self.graph_name, "nodes": nodes, "edges": edges}
+
     def strongest_claims(self, limit: int = 5) -> list[dict]:
         rows = self.query(
             "MATCH (c:Claim) RETURN c.id, c.text, c.confidence "
